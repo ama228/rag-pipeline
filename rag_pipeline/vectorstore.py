@@ -207,3 +207,87 @@ class VectorStore:
         for doc in data["documents"]:
             store.add(doc["id"], doc["text"], doc["embedding"], doc.get("metadata", {}))
         return store
+
+    def keyword_search(
+        self,
+        query: str,
+        top_k: int = 5,
+        filter_metadata: dict | None = None,
+    ) -> list[dict[str, Any]]:
+        """Simple keyword-based search using term frequency.
+
+        Useful as a fallback or to combine with vector search
+        for hybrid retrieval. No embeddings needed.
+        """
+        query_terms = set(query.lower().split())
+        if not query_terms:
+            return []
+
+        candidates = self._docs.values()
+        if filter_metadata:
+            candidates = [
+                d for d in candidates
+                if all(d.metadata.get(k) == v for k, v in filter_metadata.items())
+            ]
+
+        scored = []
+        for doc in candidates:
+            doc_terms = doc.text.lower().split()
+            if not doc_terms:
+                continue
+            hits = sum(1 for t in doc_terms if t in query_terms)
+            score = hits / len(doc_terms)
+            if score > 0:
+                scored.append({
+                    "id": doc.id,
+                    "text": doc.text,
+                    "score": score,
+                    "metadata": doc.metadata,
+                })
+
+        scored.sort(key=lambda x: x["score"], reverse=True)
+        return scored[:top_k]
+
+    def hybrid_search(
+        self,
+        query_embedding: list[float],
+        query_text: str,
+        top_k: int = 5,
+        vector_weight: float = 0.7,
+        keyword_weight: float = 0.3,
+        filter_metadata: dict | None = None,
+    ) -> list[dict[str, Any]]:
+        """Combine vector and keyword search with weighted scoring.
+
+        This gives better results than either method alone,
+        especially for technical queries where exact terms matter.
+        """
+        vec_results = self.search(query_embedding, top_k=top_k * 2, filter_metadata=filter_metadata)
+        kw_results = self.keyword_search(query_text, top_k=top_k * 2, filter_metadata=filter_metadata)
+
+        # normalize scores to 0-1 range
+        vec_max = max((r["score"] for r in vec_results), default=1.0) or 1.0
+        kw_max = max((r["score"] for r in kw_results), default=1.0) or 1.0
+
+        combined: dict[str, dict] = {}
+        for r in vec_results:
+            combined[r["id"]] = {
+                "id": r["id"],
+                "text": r["text"],
+                "score": (r["score"] / vec_max) * vector_weight,
+                "metadata": r["metadata"],
+            }
+
+        for r in kw_results:
+            if r["id"] in combined:
+                combined[r["id"]]["score"] += (r["score"] / kw_max) * keyword_weight
+            else:
+                combined[r["id"]] = {
+                    "id": r["id"],
+                    "text": r["text"],
+                    "score": (r["score"] / kw_max) * keyword_weight,
+                    "metadata": r["metadata"],
+                }
+
+        results = sorted(combined.values(), key=lambda x: x["score"], reverse=True)
+        return results[:top_k]
