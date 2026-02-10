@@ -56,6 +56,21 @@ results = store.search(query_vector, top_k=5, filter_metadata={"topic": "ml"})
 store.save("index.json")
 ```
 
+## Hybrid search
+
+v0.2.0 added hybrid retrieval that combines vector similarity with keyword matching:
+
+```python
+results = store.hybrid_search(
+    query_embedding=embed("attention mechanism"),
+    query_text="attention mechanism",
+    vector_weight=0.7,
+    keyword_weight=0.3,
+)
+```
+
+Works way better than pure vector search for technical queries where exact terms matter.
+
 ## Why not LangChain?
 
 LangChain is great but it's a black box for learning. Building this from scratch helped me understand:
@@ -63,6 +78,7 @@ LangChain is great but it's a black box for learning. Building this from scratch
 - Why overlap matters for context continuity
 - How metadata filtering works at the vector level
 - The tradeoffs in reranking vs just using top-k
+- How hybrid search outperforms pure vector search
 
 ## Tests
 
